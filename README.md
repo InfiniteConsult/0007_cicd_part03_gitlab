@@ -765,3 +765,93 @@ Now, let's create a Group Access Token for our `CICD-Stack` group. This is the m
 6.  Click the **"Create group access token"** button.
 
 Just like the PAT, this token will be displayed only once. You don't need to save it for our next steps (as we'll be using the PAT), but it's crucial to understand this is the more secure, preferred method for production CI/CD automation.
+
+### 5.4.3. The "Split-Horizon" Fix: Resolving CORS Errors
+
+As you attempted to create an Access Token, you likely ran into a critical error. The page failed to load, and your browser's developer console showed a **`Cross-Origin Request Blocked` (CORS)** error.
+
+This is a classic "split-horizon" DNS problem, and it's the final major "gotcha" in our setup.
+
+#### The Problem
+
+The error occurred because our browser and our application had two different ideas of "home":
+
+1.  **The Browser:** We were accessing the UI from `https://127.0.0.1:10300`.
+2.  **The Application:** GitLab's `external_url` was set to `https://gitlab` (implying port 443).
+
+When the UI (loaded from `127.0.0.1`) tried to make an API call, its JavaScript (which was configured by `external_url`) tried to contact `https://gitlab`. The browser saw that `127.0.0.1:10300` and `gitlab` were two different "origins" and blocked the request for security.
+
+#### The Solution
+
+To fix this, we must make the URL we type in the browser **exactly match** the `external_url` in the GitLab configuration. This requires a three-part fix.
+
+**Step 1. Teach Your Host What `gitlab` Means**
+
+First, we must edit the `hosts` file on our **host machine** (not the dev-container) to resolve `gitlab` to our `localhost` IP.
+
+* Open your hosts file with `sudo`:
+  ```bash
+  sudo nano /etc/hosts
+  ```
+* Add this line to the bottom of the file:
+  ```
+  127.0.0.1   gitlab
+  ```
+* Save and close the file. Your host machine now knows that `gitlab` points to `127.0.0.1`.
+
+**Step 2. Update `01-initial-setup.sh` (The `external_url`)**
+
+Next, we must tell GitLab to include our custom port in its `external_url`. This tells the application to generate all its internal links with the correct port, solving the CORS mismatch.
+
+* Open `01-initial-setup.sh` and find this line in the `gitlab.rb` section:
+  ```ruby
+  # --- Main GitLab URL ---
+  external_url 'https://gitlab'
+  ```
+* Change it to include our port:
+  ```ruby
+  # --- Main GitLab URL ---
+  # This sets the public URL AND configures the internal NGINX
+  # to listen on this port (e.g., 10300).
+  external_url 'https://gitlab:10300'
+  ```
+* **The "Gotcha":** We discovered that changing this `external_url` *also* changes the internal port that GitLab's NGINX service listens on. It will no longer listen on `443`; it will now listen on `10300`.
+
+**Step 3. Update `02-create-docker.sh` (The Port Mapping)**
+
+Finally, because the container's internal port is now `10300`, we must update our `docker run` command to match.
+
+* Open `02-create-docker.sh` and find this line:
+  ```bash
+  --publish 127.0.0.1:10300:443 \
+  ```
+* Change it to map `10300` on the host to `10300` in the container:
+  ```bash
+  --publish 127.0.0.1:10300:10300 \
+  ```
+
+**Step 4. Relaunch and Access by Name**
+
+To apply these changes, you **do not need to delete your data**. Simply re-run the scripts.
+
+1.  **Stop and remove the old container.** This is required to apply the new `--publish` flag.
+    ```bash
+    docker stop gitlab && docker rm gitlab
+    ```
+2.  **Re-run the setup script.** This will update the `gitlab.rb` file on your host.
+    ```bash
+    ./01-initial-setup.sh
+    ```
+3.  **Re-run the deployment script.** This will create a new container with the correct port mapping, which will then read your updated `gitlab.rb` file and reconfigure itself.
+    ```bash
+    ./02-create-docker.sh
+    ```
+
+After waiting a few minutes for the container to start, clear your browser cache (or use a private window). From now on, to access the UI, you **must** use the new, correct URL in your browser:
+
+**[https://gitlab:10300](https://www.google.com/search?q=https://gitlab:10300)**
+
+When you do, the "origin" will match (`https, gitlab, 10300`), the CORS errors will be gone, and all UI features will now work perfectly. You can now proceed with creating your Access Tokens.
+
+> NOTE
+> The scripts will be fixed by the time you read this, so all you really need to do is edit your hosts file. 

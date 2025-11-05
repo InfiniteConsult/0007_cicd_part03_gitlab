@@ -83,7 +83,7 @@ set +a # Stop auto-exporting
 sudo bash -c "cat << EOF > $GITLAB_CONFIG_FILE
 # --- Main GitLab URL ---
 # This is the address all containers on 'cicd-net' will use.
-external_url 'https://gitlab'
+external_url 'https://gitlab:10300'
 
 # --- Custom SSL Configuration ---
 nginx['enable'] = true

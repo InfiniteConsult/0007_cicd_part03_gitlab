@@ -10,7 +10,7 @@ docker run -d \
   --restart always \
   --hostname gitlab \
   --network cicd-net \
-  --publish 127.0.0.1:10300:443 \
+  --publish 127.0.0.1:10300:10300 \
   --publish 127.0.0.1:10301:22 \
   --volume gitlab-data:/var/opt/gitlab \
   --volume gitlab-logs:/var/log/gitlab \
