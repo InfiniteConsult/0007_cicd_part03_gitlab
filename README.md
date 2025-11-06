@@ -1456,3 +1456,50 @@ Our "Central Library" is open, but the "Factory" next door is an empty lot.
 We must now build that factory. Our webhook signal needs a real target, an "Automation Foreman" that can receive the "new code" signal from GitLab and start a complex assembly line.
 
 In the next article, we will do exactly that. We will build the second "skyscraper" in our CI/CD city: **Jenkins**. We will deploy the Jenkins controller, connect it to our `cicd-net`, and configure it to receive the webhooks from GitLab, officially kicking off our automated pipeline.
+
+## Addendum: Best Practices - Creating a Daily User Account
+
+We have successfully set up and verified our entire GitLab instance using the `root` administrator account. While this was necessary for the initial setup, using the `root` account for daily work or CI/CD integrations is a **significant security risk**.
+
+### Why You Shouldn't Use `root`
+
+The `root` user is an "all-powerful" administrator. It can instantly delete all projects, change critical instance settings, or remove other users. If this account's credentials (or its Personal Access Token) were ever leaked, your entire "Central Library" would be compromised.
+
+We will now follow the **Principle of Least Privilege** by creating a regular user account for our daily work.
+
+### 1. Create Your Unprivileged User
+
+1.  As the `root` user, go to the **Main menu** (top-left waffle icon) and click **"Admin"** (the wrench icon).
+2.  In the Admin Area's left-hand sidebar, navigate to **Overview > Users**.
+3.  Click the **"New user"** button in the top-right.
+4.  Fill out the form for your new "daily driver" account:
+    * **Full name:** (e.g., `Warren Jitsing`)
+    * **Username:** (e.g., `warren.jitsing`)
+    * **Email:** (e.g., `your.email@gmail.com`)
+5.  **Password:** The "Password" field is just a reset link. The new user will receive an email at the address you just provided, prompting them to set their own password.
+6.  **Access level:** Leave this as **"Regular"**. This means they are a regular user, not an instance administrator.
+7.  Click **"Create user"**.
+
+You will now need to log out of your `root` account, check your email, and follow the confirmation link to set the password for your new `warren.jitsing` user.
+
+### 2. Add Your User to Your Groups
+
+After setting your new user's password, log out and log back in as your new, non-admin user (e.g., `warren.jitsing`). You will notice you can't see any of your projects. This is because your new user has not been granted any permissions.
+
+We must now add this user to our Groups as a **Maintainer**.
+
+1.  Log out of your new user and log *back in* as `root`.
+2.  Navigate to your groups: **Main menu > Groups > Your groups**.
+3.  Click on the **`CICD-Stack`** group.
+4.  In the group's left-hand sidebar, navigate to **Manage > Members**.
+5.  Click the **"Invite members"** button.
+6.  In the "GitLab member or email address" box, type the username of your new user (e.g., `warren.jitsing`) and select them.
+7.  **Select a role:** Choose **"Maintainer"**. This gives the user high-level access *within the group* (like creating new projects and managing branch rules) without making them an instance administrator.
+8.  Click **"Invite"**.
+9.  Repeat this entire process for your **`Articles`** group.
+
+### Next Steps: Moving Away from `root`
+
+You can now log out as `root` and log in as your new "Maintainer" user. You will have full access to both groups and their projects.
+
+From this point forward, we will stop using the `root` account and its Personal Access Token (PAT). In the next article, when we configure Jenkins, we will explore more secure authentication methods, such as using **Group Access Tokens** or **Project Access Tokens**, which are not tied to any human user and are the best practice for CI/CD automation.
