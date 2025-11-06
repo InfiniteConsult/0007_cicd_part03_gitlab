@@ -854,4 +854,605 @@ After waiting a few minutes for the container to start, clear your browser cache
 When you do, the "origin" will match (`https, gitlab, 10300`), the CORS errors will be gone, and all UI features will now work perfectly. You can now proceed with creating your Access Tokens.
 
 > NOTE
-> The scripts will be fixed by the time you read this, so all you really need to do is edit your hosts file. 
+> The scripts will be fixed by the time you read this, so all you really need to do is edit your hosts file.
+
+You are absolutely right. Thank you for providing that documentation. The UI and terminology have clearly changed. "Protected Branches" has been superseded by the more comprehensive "Branch rules" feature. My apologies.
+
+Here are the corrected sections, updated to use the modern UI and "Branch rules" workflow.
+
+---
+
+## 5.5. The "Workflow" Pain Point (Enforcing MRs)
+
+Our GitLab instance is now fully configured, but it has a major **workflow problem**. By default, any developer with access to a project can commit and push *directly* to the `main` branch.
+
+> **The Analogy:** This is like letting any engineer walk into the "Central Library" and scribble directly on the "master blueprint" *without* a review.
+
+This "pain point" defeats the entire purpose of our CI/CD pipeline. We *want* every change to be a "proposal" (a Merge Request) that can be reviewed, tested, and scanned *before* it's merged into our "single source of truth."
+
+The solution is to apply a **Branch Rule**. This feature allows us to lock the `main` branch and enforce our Merge Request workflow.
+
+Based on the documentation, there is a key distinction between the Free and Premium tiers:
+* **GitLab Free (Our Version):** We can control *who* is allowed to push or merge to a branch. This is the core functionality we need.
+* **GitLab Premium/Ultimate:** This adds *required approvals* (e.g., "requires 2 approvals") and status checks.
+
+We will now use the Free tier's "Branch rule" capability to set our core push/merge permissions.
+
+---
+
+## 5.6. Action (UI): Configuring a Branch Rule
+
+We will now enforce our workflow. We'll create a "hello-world" project and apply the "Branch rule," but this time, we'll ensure the `main` branch exists *first*.
+
+1.  First, let's create the project. Navigate to the **`CICD-Stack`** Group you created.
+2.  Click the **"New project"** button (top-right).
+3.  Select **"Create blank project"**.
+4.  **Project name:** `hello-world`
+5.  **Visibility Level:** `Private`.
+6.  **✅ Check the box for "Initialize repository with a README."**
+    This is the crucial step. It creates the project *with* a `main` branch and a single, initial commit.
+7.  Click **"Create project"**.
+
+You will be taken to the new project's main page, and you will see the `README.md` file is already there. The `main` branch now officially exists.
+
+*Now* we can protect it.
+
+8.  In the project's left-hand navigation sidebar, go to **Settings > Repository**.
+9.  Find the **"Branch rules"** section and click the **"Expand"** button.
+10. Click the **"Add branch rule"** button.
+11. You will be prompted to choose a target. Select **"Branch name or pattern"**.
+12. From the dropdown, select `main`.
+13. Click the **"Create branch rule"** button.
+
+This will create the rule and take you to the **Branch rule details** page.
+
+14. On this details page, find the **"Protected branch"** section.
+    * **Allowed to merge:** In the dropdown, select **"Maintainers"**.
+    * **Allowed to push and merge:** In the dropdown, select **"No one"**.
+
+You can now save these changes. The `main` branch is now "locked."
+
+From this point forward, no one can push directly to `main`. The only way to update it is to push a new feature branch and open a Merge Request, which is exactly the professional workflow we want.
+
+## 6.1. Verification (Part 1): The "API-First" Test (Project Creation)
+
+Our first test will be to use the **Personal Access Token (PAT)** we created in Chapter 5. This test will prove that our API is accessible, our token is working, and our Python environment on our **host machine** can successfully talk to our container.
+
+This test is the **ultimate payoff for Article 2**. We will not be manually loading any CA files. We will use Python's standard `ssl.create_default_context()`, which now automatically uses our host's system trust store (where our Local CA was installed).
+
+Create the following Python script on your host machine. You can save it as `verify_gitlab.py` inside your `~/cicd_stack` directory.
+
+```python
+import os
+import ssl
+import json
+import urllib.request
+from pathlib import Path
+
+# --- Configuration ---
+ENV_FILE_PATH = Path.home() / "cicd_stack" / "cicd.env"
+GITLAB_URL = "https://gitlab:10300" # Our host-accessible URL
+GROUP_NAME = "Articles" # The group we created in 5.2
+
+# --- Standard Library .env parser ---
+def load_env(env_path):
+    """
+    Reads a .env file and loads its variables into os.environ.
+    No third-party packages needed.
+    """
+    print(f"Loading environment from: {env_path}")
+    if not env_path.exists():
+        print(f"⛔ ERROR: Environment file not found at {env_path}")
+        return False
+        
+    with open(env_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#') and '=' in line:
+                key, value = line.split('=', 1)
+                key = key.strip()
+                value = value.strip().strip('"\'') # Remove quotes
+                os.environ[key] = value
+    return True
+
+# --- Find the Group ID ---
+# We must find the numeric ID for our "Articles" group
+def get_group_id(group_name, token, context):
+    print(f"Searching for Group ID for: {group_name}...")
+    
+    headers = {"PRIVATE-TOKEN": token}
+    url = f"{GITLAB_URL}/api/v4/groups?search={group_name}"
+    
+    req = urllib.request.Request(url, headers=headers)
+    
+    try:
+        with urllib.request.urlopen(req, context=context) as response:
+            groups = json.loads(response.read().decode())
+            if not groups:
+                print(f"Error: Group '{group_name}' not found.")
+                return None
+            
+            # Find the exact match
+            for group in groups:
+                if group['name'] == group_name:
+                    print(f"Found Group ID: {group['id']}")
+                    return group['id']
+            
+            print(f"Error: No exact match for '{group_name}' found.")
+            return None
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
+
+# --- Create the Project ---
+def create_project(group_id, project_name, token, context):
+    print(f"Creating project '{project_name}' in Group ID {group_id}...")
+    
+    headers = {
+        "PRIVATE-TOKEN": token,
+        "Content-Type": "application/json"
+    }
+    url = f"{GITLAB_URL}/api/v4/projects"
+    
+    # We will create the project from our 0004 article
+    payload = json.dumps({
+        "name": project_name,
+        "namespace_id": group_id,
+        "visibility": "private",
+        "initialize_with_readme": False
+    }).encode('utf-8')
+    
+    req = urllib.request.Request(url, data=payload, headers=headers, method='POST')
+    
+    try:
+        with urllib.request.urlopen(req, context=context) as response:
+            project = json.loads(response.read().decode())
+            print(f"✅ Success! Project created.")
+            print(f"  ID: {project['id']}")
+            print(f"  URL: {project['web_url']}")
+    except Exception as e:
+        print(f"An error occurred creating project: {e}")
+        if hasattr(e, 'read'):
+            print(f"  Response: {e.read().decode()}")
+
+# --- Main ---
+if __name__ == "__main__":
+    if not load_env(ENV_FILE_PATH):
+        exit(1)
+
+    GITLAB_TOKEN = os.getenv('GITLAB_API_TOKEN')
+    
+    if not GITLAB_TOKEN:
+        print("Error: GITLAB_API_TOKEN not found in cicd.env")
+        exit(1)
+    
+    # This is the payoff from Article 2!
+    # We just create the default context. Python will
+    # automatically use the system trust store, which
+    # now contains our Local CA.
+    print("Creating default SSL context...")
+    context = ssl.create_default_context()
+        
+    group_id = get_group_id(GROUP_NAME, GITLAB_TOKEN, context)
+    
+    if group_id:
+        create_project(group_id, "0004_std_lib_http_client", GITLAB_TOKEN, context)
+```
+
+### Running the Verification
+
+1.  **Run the Script (No Dependencies Required):**
+    ```bash
+    python3 verify_gitlab.py
+    ```
+
+**The Payoff:**
+You should see the following output:
+
+```
+Loading environment from: /home/your_user/cicd_stack/cicd.env
+Creating default SSL context...
+Searching for Group ID for: Articles...
+Found Group ID: 2
+Creating project '0004_std_lib_http_client' in Group ID 2...
+✅ Success! Project created.
+  ID: 3
+  URL: https://gitlab:10300/Articles/0004_std_lib_http_client
+```
+
+This simple, dependency-free script verifies a massive amount of our architecture:
+
+1.  Our `/etc/hosts` file is working (it found `gitlab`).
+2.  Our Docker port mapping is correct (it reached `10300`).
+3.  Our **host's system trust store is working perfectly** (the SSL connection succeeded with `ssl.create_default_context()` and no other arguments).
+4.  Our `gitlab.rb` SSL config is working.
+5.  Our Personal Access Token is valid and has `api` scope.
+6.  Our `Articles` group is set up and accessible.
+
+Go to the GitLab UI (`https://gitlab:10300`). You will now see your new **`0004_std_lib_http_client`** project, complete without a `README.md`, inside the `Articles` group.
+
+## 6.2. Verification (Part 2): The "Internal Push" & Webhook Test
+
+This is the full-stack test of our `cicd-net` architecture. We will simulate our entire CI/CD pipeline. Our `dev-container` will act as a developer pushing a change *and* as the "Jenkins" server receiving the webhook.
+
+This test will prove:
+
+* **Internal DNS:** The dev-container can resolve `gitlab`.
+* **GitLab's CA Trust:** GitLab (as a client) trusts our internal services.
+* **Webhook Mechanism:** GitLab correctly fires a webhook on a push.
+
+### Action 1 (Admin UI): The "SSRF" Gotcha - Allowing Local Webhooks
+
+Before we can set up the webhook, we must first get past the `Invalid url given` error. We need to tell GitLab that it's allowed to send requests to our internal `dev-container`.
+
+1.  As your `root` user, go to the **Main menu** (top-left waffle icon) and click **"Admin"** (the wrench icon).
+2.  In the Admin Area's left-hand sidebar, navigate to **Settings \> Network**.
+3.  Find the **"Outbound requests"** section and click the **"Expand"** button.
+4.  Find the checkbox labeled **"Allow requests to the local network from web hooks and services"**.
+5.  **Check** this box.
+6.  (Optional but Recommended) For a more secure setup, you can leave the box *unchecked* and instead add `dev-container` (and later, `jenkins`) to the allowlist in the "Local IP addresses and domain names that hooks and integrations can access" text box. For our purposes, checking the main "Allow" box is the simplest solution.
+7.  Click the **"Save changes"** button at the bottom of the section.
+
+Now that we've told GitLab to trust our local network, the `Invalid url given` error will be gone.
+
+### Action 2 (UI): Set Up the Webhook
+
+Now, let's try this step again.
+
+1.  In the GitLab UI, navigate to your **`hello-world`** project (inside the `CICD-Stack` group).
+2.  In the project's left-hand sidebar, go to **Settings \> Webhooks**.
+3.  Fill out the webhook form:
+    * **URL:** `https://dev-container:10400`
+    * **Secret token:** Create a simple secret, for example, `my-super-secret-token`. We will use this to verify the request.
+    * **Trigger:** Uncheck everything *except* **"Push events"**.
+    * **SSL verification:** Make sure **"Enable SSL verification"** is **CHECKED**. This is the whole point of the test.
+4.  Click **"Add webhook"**.
+
+This time, it will work. GitLab will send a test event, which will still fail (with a "Hook execution failed" error) because our `webhook_receiver.py` isn't running yet. This is expected.
+
+### Action 3 (Host): Generate and Stage the `dev-container` Certificate
+
+Before we can run our server, we must give it a valid "passport." We'll use our Article 2 CA scripts from our **host machine** to generate a new certificate for the hostname `dev-container`.
+
+Then, we'll copy those new certs into the `~/Documents/FromFirstPrinciples/data` directory, which is mounted inside our dev container as `~/data`.
+
+1.  Open a terminal on your **host machine** (not the dev-container).
+
+2.  Navigate to your Article 2 script directory:
+
+    ```bash
+    # (On your HOST machine)
+    cd ~/Documents/FromFirstPrinciples/articles/0006_cicd_part02_certificate_authority
+    ```
+
+3.  Run the `02-issue-service-cert.sh` script from here, passing `dev-container` as the name. This script is smart enough to operate on the `~/cicd_stack/ca` directory.
+
+    ```bash
+    ./02-issue-service-cert.sh dev-container
+    ```
+
+    This will create the new certs in `~/cicd_stack/ca/pki/services/dev-container/`.
+
+4.  **Copy the new certs** to the dev container's shared data volume (which, as you noted, already exists):
+
+    ```bash
+    # (On your HOST machine)
+    DATA_DIR=~/Documents/FromFirstPrinciples/data
+    CERT_SOURCE_DIR=~/cicd_stack/ca/pki/services/dev-container
+
+    cp $CERT_SOURCE_DIR/dev-container.crt.pem $DATA_DIR/
+    cp $CERT_SOURCE_DIR/dev-container.key.pem $DATA_DIR/
+    ```
+
+### Action 4 (Dev Container): The "Jenkins" Simulator
+
+Now, let's go back to your **dev container**. We will create the simple Python server that will act as our "Jenkins" instance, placing it in the correct article directory. It will listen on port `10400` and use the `dev-container` certificate we just staged in the `~/data` directory.
+
+1.  **Create the server script:**
+    Navigate to your article directory and create the new Python file.
+
+    ```bash
+    # (Inside the dev container)
+    cd ~/articles/0007_cicd_part03_gitlab
+    nano webhook_receiver.py
+    ```
+
+2.  **Paste in the following code.** Note the updated certificate paths pointing to `~/data`.
+
+    ```python
+    import http.server
+    import ssl
+    import json
+    import os
+
+    # --- CONFIGURATION ---
+    LISTEN_HOST = '0.0.0.0'
+    LISTEN_PORT = 10400
+    SECRET_TOKEN = 'my-super-secret-token' # Must match your GitLab webhook
+
+    # Paths to our *new* dev-container certs in the ~/data mount
+    CERT_DIR = os.path.expanduser('~/data')
+    CERT_FILE = os.path.join(CERT_DIR, 'dev-container.crt.pem')
+    KEY_FILE = os.path.join(CERT_DIR, 'dev-container.key.pem')
+
+    class WebhookHandler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            # 1. Verify the Secret Token
+            gitlab_token = self.headers.get('X-Gitlab-Token')
+            if gitlab_token != SECRET_TOKEN:
+                print("⛔ ERROR: Invalid X-Gitlab-Token.")
+                self.send_response(403)
+                self.end_headers()
+                return
+            
+            # 2. Read the JSON payload
+            content_length = int(self.headers['Content-Length'])
+            body = self.rfile.read(content_length)
+            
+            # 3. Print the relevant info
+            print("\n--- ✅ WEBHOOK RECEIVED! ---")
+            try:
+                payload = json.loads(body)
+                print(f"Project: {payload.get('project', {}).get('path_with_namespace')}")
+                print(f"Pusher:  {payload.get('user_name')}")
+                print(f"Ref:     {payload.get('ref')}")
+                
+                # Print all commits in this push
+                for commit in payload.get('commits', []):
+                    print(f"  - Commit: {commit.get('id')[:8]}")
+                    print(f"    Author: {commit.get('author', {}).get('name')}")
+                    print(f"    Msg:    {commit.get('message').strip()}")
+                    
+            except Exception as e:
+                print(f"Error parsing JSON: {e}")
+            
+            # 4. Send a 200 OK response
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'Webhook Received')
+
+    if __name__ == "__main__":
+        print(f"Starting HTTPS server on https://{LISTEN_HOST}:{LISTEN_PORT}...")
+        
+        # Create an SSL context using our "dev-container" certs
+        context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        context.load_cert_chain(certfile=CERT_FILE, keyfile=KEY_FILE)
+        
+        httpd = http.server.HTTPServer((LISTEN_HOST, LISTEN_PORT), WebhookHandler)
+        httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
+        
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\nShutting down server...")
+            httpd.server_close()
+    ```
+
+3.  **Run the server:**
+
+    ```bash
+    # (Inside the dev-container, from the 0007... directory)
+    python3 webhook_receiver.py
+    ```
+
+    You should see: `Starting HTTPS server on https://0.0.0.0:10400...`
+
+Our "Jenkins" simulator is now running with a valid, matching certificate, waiting for a signal.
+
+### Action 5 (Dev Container): The Git Push
+
+Finally, let's act as a developer. We'll open a **second `dev-container` terminal** (leave your `webhook_receiver.py` server running in the first one).
+
+We will clone the `hello-world` project, attempt to push to `main` (which will fail), and then successfully push a feature branch (which will trigger our webhook).
+
+### 1\. Configure Git
+
+Before your first push, you must tell Git who you are.
+
+> **Note on Automation:** Our dev container is set up to automatically source a Git configuration from `~/data/.gitconfig` at startup. For a fully automated setup, you could place your `.gitconfig` file in the `~/Documents/FromFirstPrinciples/data` directory on your host, and your container would pick it up on every boot.
+
+For now, we'll run the manual, one-time commands:
+
+```bash
+# (Inside the dev-container)
+git config --global user.name "Your Name"
+git config --global user.email "your.email@gmail.com"
+```
+
+(Use the email address you registered with GitLab in section 5.3).
+
+### 2\. Clone the Repository
+
+Navigate to your `repos` directory, where we'll clone the project.
+
+```bash
+# (Inside the dev-container)
+cd ~/repos
+git clone https://gitlab:10300/CICD-Stack/hello-world.git
+```
+
+You will now be prompted for credentials. This is the crucial step for Git-over-HTTPS:
+
+* **Username:** `root`
+* **Password:** **Do NOT use your root password.** Instead, copy and paste the **Personal Access Token (PAT)** (`glpat-...`) that you saved in your `cicd.env` file. This is the standard, secure way to authenticate Git clients.
+
+After you authenticate, Git will clone the repository:
+
+```
+Cloning into 'hello-world'...
+Username for 'https://gitlab:10300': root
+Password for 'https://root@gitlab:10300': 
+remote: Enumerating objects: 3, done.
+remote: Counting objects: 100% (3/3), done.
+remote: Compressing objects: 100% (2/2), done.
+remote: Total 3 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
+Receiving objects: 100% (3/3), done.
+```
+
+Now, `cd` into the new project:
+
+```bash
+cd hello-world
+```
+
+### 3\. Create Our First Commit (The Failed Push)
+
+Recall that we *protected* the `main` branch. This means our push to `main` **must fail**.
+
+```bash
+# (Inside the dev-container)
+# We will just edit the README that was created when we made the project.
+echo "Hello World!" >> README.md
+git add .
+git commit -m "Test commit to main"
+
+# This push will be REJECTED by our branch rule
+git push -u origin main
+```
+
+**The Payoff (Part 1):** You will see this error, proving our rule is working:
+
+```
+remote: GitLab: You are not allowed to push code to protected branches on this project.
+! [remote rejected] main -> main (pre-receive hook declined)
+```
+
+### 4\. Push Correctly (The Successful Push)
+
+Now, let's do it the *right* way by creating a feature branch.
+
+```bash
+# (Inside the dev-container)
+git checkout -b feature/initial-commit
+
+# We already have the commit, so we just push the new branch
+git push -u origin feature/initial-commit
+```
+
+This push will **succeed**.
+
+-----
+
+### The Payoff (Part 2)
+
+Now, look at your *first* dev-container terminal (the one running `webhook_receiver.py`). You will see:
+
+```
+--- ✅ WEBHOOK RECEIVED! ---
+Project: CICD-Stack/hello-world
+Pusher:  Your Name
+Ref:     refs/heads/feature/initial-commit
+  - Commit: <some_hash>
+    Author: Your Name
+    Msg:    Test commit to main
+```
+
+This single test confirms our entire internal architecture is working perfectly:
+
+1.  **Internal DNS:** `git clone https://gitlab:10300` worked.
+2.  **Authentication:** Our Personal Access Token worked for Git authentication.
+3.  **Branch Rules:** Our push to `main` was correctly **rejected**.
+4.  **Webhook Trigger:** Our push to `feature/initial-commit` was successful and **fired the webhook**.
+5.  **GitLab CA Trust:** GitLab (as a client) saw our `https://dev-container:10400` URL, validated its certificate (which has the correct hostname `dev-container`) against the `ca.pem` we mounted in `trusted-certs`, and successfully made the HTTPS request.
+
+We have now verified our setup from end to end.
+
+## 6.3. Verification (Part 3): The "External Push" (Practical Application)
+
+We have successfully verified our *internal* network (dev-container to GitLab). This final test is the payoff for our **host machine** setup from Article 2. We will prove that our *external* (host-to-container) workflow is working just as smoothly.
+
+We will `cd` into our *existing* `0004_std_lib_http_client` repository on our host machine, add our new GitLab instance as a "remote," and push our code.
+
+This push will **only succeed** because:
+
+1.  Our host's `/etc/hosts` file can resolve `gitlab` to `127.0.0.1`.
+2.  Our `git` CLI (like our Python script) uses the **system trust store**, which we fixed in Article 2 to trust our Local CA.
+
+### Action 1 (Host): Add the New Remote
+
+1.  On your **host machine's terminal**, navigate to the existing project directory from our previous article:
+
+    ```bash
+    # (On your HOST machine)
+    cd ~/Documents/FromFirstPrinciples/articles/0004_std_lib_http_client
+    ```
+
+2.  Add our new GitLab instance as a remote. We'll call it `gitlab`. We use the `https://gitlab:10300` URL that our host can now resolve.
+
+    ```bash
+    git remote add gitlab https://gitlab:10300/Articles/0004_std_lib_http_client.git
+    ```
+
+3.  (Optional) Verify the new remote was added:
+
+    ```bash
+    git remote -v
+    ```
+
+    You should see `gitlab` listed along with `origin` (which likely points to GitHub).
+
+### Action 2 (Host): Push to GitLab
+
+Now, let's push our `main` branch to the new `gitlab` remote.
+
+```bash
+# (On your HOST machine)
+git push -u gitlab main
+```
+
+Just as you did in the dev container, you will be prompted for credentials:
+
+* **Username:** `root`
+* **Password:** (Paste your **Personal Access Token**, `glpat-...`)
+
+**The Payoff:**
+The push will succeed without any SSL errors. `git` will not complain about an "untrusted certificate" because it's using your host's trust store.
+
+You have now:
+
+1.  Created a project (`0004_std_lib_http_client`) via the API.
+2.  Pushed your existing local code to it from your host machine.
+
+Go to the GitLab UI and look at your `0004_std_lib_http_client` project. It will no longer be empty. It will now contain all the code from your local repository, and its `main` branch is now populated.
+
+# Chapter 7: Conclusion
+
+## 7.1. What We've Built: The "Central Library" is Open
+
+Let's take a moment to appreciate what we have just accomplished. We have successfully deployed a fully-featured, secure, and production-ready **GitLab** instance entirely from first principles.
+
+This isn't just a container; it's the **"Central Library"** of our new CI/CD city, and it is built on a rock-solid, architecturally-sound foundation.
+
+* It lives **inside our private `cicd-net`**, able to communicate with our other services using internal DNS.
+* It is **fully secured with SSL**, serving traffic over HTTPS using a certificate from our own Local Certificate Authority.
+* It **trusts our Local CA**, allowing it to send secure webhooks to *other* internal services like our `dev-container` (and later, Jenkins).
+* It is configured for **professional team workflow** using "Branch Rules" to protect `main` and enforce Merge Requests.
+* It is **fully automated**, with a "baked-in" `gitlab.rb` file that handles everything from the root password to our SMTP settings, solving the complex "first-run" conflict.
+* It is **fully verifiable**, proven to work from the API (Python script), the internal network (dev-container Git push), and the external host (host Git push).
+
+We have solved every "pain point" we set out to address: network isolation, data sovereignty, and the "paid feature" trap. We have built our library *inside* our city walls.
+
+## 7.2. The Next "Pain Point"
+
+We have successfully built our "Central Library" (GitLab) and proven that our code (like `hello-world` and `0004_http_client`) is now safely stored inside, "on the shelf."
+
+This introduces our next, obvious "pain point."
+
+Our code is just **sitting there**.
+
+Our `dev-container` test was a simulation, but it revealed the truth: a webhook is firing, but it's just hitting a test server. We have no "factory" to *act* on this signal. We have no automated process to:
+* Compile our code.
+* Run our unit tests.
+* Scan our code for quality or security vulnerabilities.
+* Build our code into a Docker image.
+* Publish our finished "product."
+
+Our "Central Library" is open, but the "Factory" next door is an empty lot.
+
+---
+
+## 7.3. Next Steps
+
+We must now build that factory. Our webhook signal needs a real target, an "Automation Foreman" that can receive the "new code" signal from GitLab and start a complex assembly line.
+
+In the next article, we will do exactly that. We will build the second "skyscraper" in our CI/CD city: **Jenkins**. We will deploy the Jenkins controller, connect it to our `cicd-net`, and configure it to receive the webhooks from GitLab, officially kicking off our automated pipeline.
