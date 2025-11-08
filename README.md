@@ -856,12 +856,6 @@ When you do, the "origin" will match (`https, gitlab, 10300`), the CORS errors w
 > NOTE
 > The scripts will be fixed by the time you read this, so all you really need to do is edit your hosts file.
 
-You are absolutely right. Thank you for providing that documentation. The UI and terminology have clearly changed. "Protected Branches" has been superseded by the more comprehensive "Branch rules" feature. My apologies.
-
-Here are the corrected sections, updated to use the modern UI and "Branch rules" workflow.
-
----
-
 ## 5.5. The "Workflow" Pain Point (Enforcing MRs)
 
 Our GitLab instance is now fully configured, but it has a major **workflow problem**. By default, any developer with access to a project can commit and push *directly* to the `main` branch.
