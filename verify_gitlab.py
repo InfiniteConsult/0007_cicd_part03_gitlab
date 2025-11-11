@@ -6,7 +6,7 @@ from pathlib import Path
 
 # --- Configuration ---
 ENV_FILE_PATH = Path.home() / "cicd_stack" / "cicd.env"
-GITLAB_URL = "https://gitlab:10300" # Our host-accessible URL
+GITLAB_URL = "https://gitlab.cicd.local:10300" # Our host-accessible URL
 GROUP_NAME = "Articles" # The group we created in 5.2
 
 # --- Standard Library .env parser ---
